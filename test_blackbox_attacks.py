@@ -24,8 +24,10 @@ batch_size = 256
 
 model_paths = {
     "static": "./SVHN_target_modelC_static_loss3.pth",
-    "dynamic": "./SVHN_target_modelC_dynamic_loss3.pth",
-    "first_order": "./SVHN_target_modelC_1order_loss3.pth"
+    "first_order": "./SVHN_target_modelC_1order_loss3.pth",
+    "dynamic_PGD": "./SVHN_target_modelC_1order_PGD.pth",
+    "dynamic_FGSM": "./SVHN_target_modelC_1order_FGSM.pth",
+    "dynamic_GAUSSIAN": "./SVHN_target_modelC_1order_GAUSSIAN.pth",
 }
 
 def load_model(weight_path):

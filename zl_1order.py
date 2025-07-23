@@ -1,10 +1,12 @@
 import torch
-import torchvision.datasets
-import torchvision.transforms as transforms
-from torch.utils.data import DataLoader, random_split
-import torch.nn.functional as F
 import torch.nn as nn
-from models import  MNIST_target_net, MNISTClassifier, MNISTClassifierA, MNISTClassifierC, MNISTClassifierD
+import torch.nn.functional as F
+import torchvision
+from torchvision import transforms
+from torch.utils.data import DataLoader
+# 假设您的模型定义在 models.py 中
+from models import ResNet18_SVHN
+from torchvision.models import resnet18
 
 
 class ResnetBlock(nn.Module):
@@ -50,10 +52,11 @@ class ResnetBlock(nn.Module):
         return out
 
 
+# --- [注意] 以下生成器G的代码保留，但其训练和使用将被注释掉或替换 ---
 class UnetCatGlobalGenerator(nn.Module):
     def __init__(self, input_nc=1, output_nc=1, ngf=64, n_downsampling=2, n_blocks=9, norm_layer=nn.BatchNorm2d,
                  padding_type='reflect', use_dropout=False, max_channel=512):
-        assert(n_blocks >= 0)
+        assert (n_blocks >= 0)
         super(UnetCatGlobalGenerator, self).__init__()
         self.n_downsampling = n_downsampling
         self.n_blocks = n_blocks
@@ -64,7 +67,7 @@ class UnetCatGlobalGenerator(nn.Module):
                                         norm_layer(ngf))
         ### downsample
         for i in range(n_downsampling):
-            mult = 2**i
+            mult = 2 ** i
             in_ch, out_ch = min(ngf * mult, max_channel), min(ngf * mult * 2, max_channel)
             setattr(self, 'down_sample_%d' % i,
                     nn.Sequential(activation, nn.ReflectionPad2d(1),
@@ -72,27 +75,29 @@ class UnetCatGlobalGenerator(nn.Module):
                                   norm_layer(out_ch)))
 
         # ### resnet blocks
-        mult = 2**n_downsampling
+        mult = 2 ** n_downsampling
         res_ch = min(ngf * mult, max_channel)
         for i in range(n_blocks):
             # if i == 0:
             setattr(self, 'res_block_%d' % i,
                     nn.Sequential(activation, ResnetBlock(res_ch, padding_type=padding_type,
-                                  norm_layer=norm_layer, use_dropout=use_dropout)))
+                                                          norm_layer=norm_layer, use_dropout=use_dropout)))
 
         ### upsample
         for i in range(n_downsampling):
-            mult = 2**(n_downsampling - i)
+            mult = 2 ** (n_downsampling - i)
             # in_ch = min(ngf * mult, max_channel) * 2
             in_ch = min(ngf * mult, max_channel)
             out_ch = min(int(ngf * mult / 2), max_channel)
             setattr(self, 'up_sample_%d' % i,
                     nn.Sequential(activation,
-                                  nn.ConvTranspose2d(in_ch, out_ch, kernel_size=4, stride=2, padding=1, output_padding=0, bias=False),
+                                  nn.ConvTranspose2d(in_ch, out_ch, kernel_size=4, stride=2, padding=1,
+                                                     output_padding=0, bias=False),
                                   norm_layer(out_ch)))
 
         self.final_conv = nn.Sequential(activation,
-                                        nn.ReflectionPad2d(2), nn.Conv2d(ngf, output_nc, kernel_size=5, padding=0, bias=False),
+                                        nn.ReflectionPad2d(2),
+                                        nn.Conv2d(ngf, output_nc, kernel_size=5, padding=0, bias=False),
                                         nn.Tanh())
 
     def forward(self, input):
@@ -105,10 +110,11 @@ class UnetCatGlobalGenerator(nn.Module):
             x = getattr(self, 'res_block_%d' % i)(x)
         for i in range(self.n_downsampling):
             x = getattr(self, 'up_sample_%d' % i)(x)
-            
+
         x = self.final_conv(x)
         perb = x * 0.2
         return perb
+
 
 def weights_init(m):
     classname = m.__class__.__name__
@@ -118,21 +124,24 @@ def weights_init(m):
         nn.init.normal_(m.weight.data, 1.0, 0.05)
         nn.init.constant_(m.bias.data, 0)
 
+
 if __name__ == "__main__":
+    # --- [修改] 在这里设置探索模式 ---
+    # 可选模式: 'GAUSSIAN', 'FGSM', 'PGD'
+    EXPLORATION_MODE = 'GAUSSIAN'
+    print(f"当前探索模式: {EXPLORATION_MODE}")
+
     use_cuda = True
     image_nc = 3
-    batch_size = 256
+    batch_size = 128  # 减小了batch_size以适应常见GPU显存
 
     # Define what device we are using
     print("CUDA Available: ", torch.cuda.is_available())
     device = torch.device("cuda" if (use_cuda and torch.cuda.is_available()) else "cpu")
 
     # 加载SVHN数据集
-    import torchvision
-    from models import ResNet18_SVHN
     svhn_train = torchvision.datasets.SVHN('./dataset', split='train', transform=transforms.ToTensor(), download=True)
     svhn_test = torchvision.datasets.SVHN('./dataset', split='test', transform=transforms.ToTensor(), download=True)
-    # 这里直接用全部训练集
     train_dataloader = DataLoader(svhn_train, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=8)
 
     # 目标模型和教师模型都用ResNet18_SVHN
@@ -140,7 +149,11 @@ if __name__ == "__main__":
     target_model.train()
 
     teacher_model = ResNet18_SVHN(num_classes=10).to(device)
-    teacher_model.load_state_dict(torch.load("svhn_resnet18_weights_adv.pth", map_location=device))
+    # 确保您有这个权重文件，或者使用一个预训练好的模型
+    try:
+        teacher_model.load_state_dict(torch.load("svhn_resnet18_weights_adv.pth", map_location=device))
+    except FileNotFoundError:
+        print("警告: 教师模型权重 'svhn_resnet18_weights_adv.pth' 未找到。使用随机初始化的教师模型。")
     teacher_model.eval()
 
     alpha = 0.3
@@ -151,40 +164,31 @@ if __name__ == "__main__":
 
     optimizer = torch.optim.Adam(target_model.parameters(), lr=1e-3)
 
-    # 生成器输入输出通道都为3
-    netG = UnetCatGlobalGenerator(input_nc=3, output_nc=3).to(device)
-    netG.train()
-    g_optimizer = torch.optim.Adam(netG.parameters(), lr=1e-3)
+    # --- [修改] 移除了生成器G的实例化和其优化器，因为不再需要它们 ---
+    # netG = UnetCatGlobalGenerator(input_nc=3, output_nc=3).to(device)
+    # netG.train()
+    # g_optimizer = torch.optim.Adam(netG.parameters(), lr=1e-3)
 
-    from torchattacks import PGD, FGSM, MIFGSM
+    # --- [修改] 导入 torchattacks 并实例化所需的攻击 ---
+    from torchattacks import PGD, FGSM
 
-    kkk = 2
-    # attack_config = {
-    #     'eps' : .3 / 3 * kkk, 
-    #     'attack_steps': 10,
-    #     'attack_lr': 0.05 / 3 * kkk, 
-    #     'random_init': True, 
-    # }
-    attack_config = {
-        # 'eps' : .3 / 3 * kkk, 
-        'eps' : 8/255, 
-        'attack_steps': 7,
-        'attack_lr': 2/255, 
-        'random_init': False, 
-    }
-    fgsm_attack = FGSM(target_model, attack_config)
+    # 攻击参数
+    epsilon = 8 / 255
+    attack_steps = 7
+    step_size = 2 / 255
 
+    fgsm_attack = FGSM(target_model, eps=epsilon)
+    pgd_attack = PGD(target_model, eps=epsilon, alpha=step_size, steps=attack_steps, random_start=True)
+    # 高斯噪声的标准差
+    gaussian_sigma = 8 / 255
 
     epochs = 100
-    success_rate = 0
     n_iter = 0
     for epoch in range(epochs):
         loss_epoch = 0
         loss_epoch1 = 0
         loss_epoch2 = 0
         loss_epoch3 = 0
-        g_loss_epoch1 = 0
-        g_loss_epoch2 = 0
         num_patch = 0
         for i, data in enumerate(train_dataloader, 0):
             n_iter += 1
@@ -192,59 +196,39 @@ if __name__ == "__main__":
             train_imgs, train_labels = data
             train_imgs, train_labels = train_imgs.to(device), train_labels.to(device)
 
-            # neighbor_train_imgs = fgsm_attack(train_imgs, train_labels).detach()
-            
-            netG.train()
-            target_model.eval()
-            grad = netG(train_imgs)
-            # neighbor_train_imgs = train_imgs + grad
-            neighbor_train_imgs = torch.clamp(train_imgs + grad, 0., 1.)
+            # --- [修改] 移除了生成器G的训练部分 ---
+            # 原来的代码会在这里训练生成器G，我们不再需要这部分
+            # netG.train()
+            # target_model.eval()
+            # ... (g_loss.backward(), g_optimizer.step())
 
-            with torch.no_grad():
-                teacher_x_preds = teacher_model(train_imgs).detach()
-                teacher_preds = teacher_model(neighbor_train_imgs).detach()
-                
-                delta_teacher = (F.softmax(teacher_preds, dim=1) - F.softmax(teacher_x_preds, dim=1)).detach()
-
-            student_preds = target_model(neighbor_train_imgs)
-            student_x_preds = target_model(train_imgs)
-
-            delta_student = F.softmax(student_preds, dim=1) - F.softmax(student_x_preds, dim=1)
-            
-
-            # print(grad.view(batch_size, -1).norm(2, dim=1).size())
-            g_norm = torch.clamp_min(grad.view(batch_size, -1).norm(2, dim=1), 2).mean()
-            # g_diver = -divergence_loss_fn(
-            #     F.log_softmax(student_preds, dim=1),
-            #     F.softmax(teacher_preds, dim=1)
-            # )
-            # g_diver = -F.mse_loss(F.softmax(student_preds, dim=1) - F.softmax(teacher_preds, dim=1), torch.zeros_like(teacher_preds).to(device))
-            g_diver = -F.mse_loss(delta_teacher - delta_student, torch.zeros_like(delta_student).to(device))
-
-            g_loss = g_norm * 0.1 + g_diver * 100
-            # g_loss = g_diver * 10
-            g_optimizer.zero_grad()
-            # print(netG.final_conv[2].weight.grad)
-            g_loss.backward()
-            # print()
-            g_optimizer.step()
-
-            g_loss_epoch1 += g_norm.item()
-            g_loss_epoch2 += g_diver.item()
-
-            
-            netG.eval()
+            # --- 学生模型训练部分 ---
             target_model.train()
 
-            # if n_iter % 5 != -1:
-            #     continue
+            # --- [修改] 核心部分：根据选择的模式生成邻居样本 ---
+            # 将学生模型设置为评估模式以生成对抗样本，防止BN层等更新
+            target_model.eval()
+            if EXPLORATION_MODE == 'GAUSSIAN':
+                # 动态蒸馏 (高斯探索)
+                noise = torch.randn_like(train_imgs) * gaussian_sigma
+                neighbor_train_imgs = train_imgs + noise
+            elif EXPLORATION_MODE == 'FGSM':
+                # 动态蒸馏 (FGSM 对抗探索)
+                neighbor_train_imgs = fgsm_attack(train_imgs, train_labels)
+            elif EXPLORATION_MODE == 'PGD':
+                # 动态蒸馏 (PGD 对抗探索)
+                neighbor_train_imgs = pgd_attack(train_imgs, train_labels)
+            else:
+                raise ValueError(f"未知的探索模式: {EXPLORATION_MODE}")
 
-            grad = netG(train_imgs)
-            neighbor_train_imgs = torch.clamp(train_imgs + grad, 0., 1.)
-            neighbor_train_imgs = neighbor_train_imgs.detach()
+            # 生成邻居后，将学生模型切换回训练模式
+            target_model.train()
 
+            # 确保邻居样本在有效范围内，并从计算图中分离
+            neighbor_train_imgs = torch.clamp(neighbor_train_imgs, 0., 1.).detach()
+
+            # --- Loss 计算部分（与原代码保持一致） ---
             with torch.no_grad():
-                # neighbor_train_imgs = torch.clamp(train_imgs + torch.randn_like(train_imgs) * 8/255, 0., 1.)
                 teacher_preds = teacher_model(train_imgs)
                 neighbor_teacher_preds = teacher_model(neighbor_train_imgs)
                 delta_teacher = (F.softmax(neighbor_teacher_preds, dim=1) - F.softmax(teacher_preds, dim=1)).detach()
@@ -254,52 +238,54 @@ if __name__ == "__main__":
 
             student_loss = student_loss_fn(student_preds, train_labels)
 
-            
             delta_student = F.softmax(neighbor_student_preds, dim=1) - F.softmax(student_preds, dim=1)
-            
+
             ditillation_loss = divergence_loss_fn(
                 F.log_softmax(student_preds / temp, dim=1),
                 F.softmax(teacher_preds / temp, dim=1)
             )
-        
+
             neighbor_ditillation_loss = divergence_loss_fn(
                 F.log_softmax(neighbor_student_preds / temp, dim=1),
                 F.softmax(neighbor_teacher_preds / temp, dim=1)
             )
-            neighbor_mse_loss = F.mse_loss(delta_teacher - delta_student, torch.zeros_like(delta_student).to(device))
+            # 这个loss项鼓励学生模型的输出变化与教师模型的输出变化保持一致
+            neighbor_mse_loss = F.mse_loss(delta_teacher, delta_student)
 
-
-            # loss_model = F.cross_entropy(student_preds, train_labels)
-            logits_label = torch.argmax(student_preds, dim=1)
-            success_rate += torch.sum(logits_label == train_labels)/train_labels.shape[0]
-
-            loss_model = alpha * student_loss + (1 - alpha) * ditillation_loss + neighbor_ditillation_loss * 3
-            # loss_model = alpha * student_loss + (1 - alpha) * ditillation_loss + neighbor_mse_loss * 3 + neighbor_ditillation_loss * 3
+            # 最终的损失函数
             # loss_model = alpha * student_loss + (1 - alpha) * ditillation_loss
+            # 加上邻居损失项
+            loss_model = alpha * student_loss + (
+                        1 - alpha) * ditillation_loss + neighbor_mse_loss * 3 + neighbor_ditillation_loss * 3
 
             loss_epoch += loss_model.item()
             loss_epoch1 += student_loss.item()
             loss_epoch2 += ditillation_loss.item()
-            loss_epoch3 += neighbor_ditillation_loss.item()
+            loss_epoch3 += (neighbor_mse_loss.item() * 3 + neighbor_ditillation_loss.item() * 3)  # 合并邻居损失项的记录
+
             optimizer.zero_grad()
             loss_model.backward()
             optimizer.step()
 
-        print('loss in epoch %d: [student] %f [ditillation] %f [neighbor] %f' % (epoch, loss_epoch1/num_patch, loss_epoch2/num_patch, loss_epoch3/num_patch))
-        print('\tG loss in epoch %d: [norm] %f [diver] %f' % (epoch, g_loss_epoch1/num_patch, g_loss_epoch2/num_patch))
+        print('loss in epoch %d: [student] %.4f [distillation] %.4f [neighbor_loss] %.4f' % (epoch,
+                                                                                             loss_epoch1 / num_patch,
+                                                                                             loss_epoch2 / num_patch,
+                                                                                             loss_epoch3 / num_patch))
 
     # save model
-    targeted_model_file_name = './SVHN_target_modelC_dynamic_loss3.pth'
+    # --- [修改] 根据模式保存不同的模型文件名 ---
+    targeted_model_file_name = f'SVHN_target_modelC_1order_{EXPLORATION_MODE}.pth'
     torch.save(target_model.state_dict(), targeted_model_file_name)
+    print(f"模型已保存至: {targeted_model_file_name}")
     target_model.eval()
 
     # SVHN test dataset
-    test_dataloader = DataLoader(svhn_test, batch_size=batch_size, shuffle=True, num_workers=1)
+    test_dataloader = DataLoader(svhn_test, batch_size=batch_size, shuffle=False, num_workers=1)
     num_correct = 0
     for i, data in enumerate(test_dataloader, 0):
         test_img, test_label = data
         test_img, test_label = test_img.to(device), test_label.to(device)
         pred_lab = torch.argmax(target_model(test_img), 1)
-        num_correct += torch.sum(pred_lab==test_label,0)
+        num_correct += torch.sum(pred_lab == test_label, 0)
 
-    print('accuracy in testing set: %f\n'%(num_correct.item() / len(svhn_test)))
+    print('accuracy in testing set: %f\n' % (num_correct.item() / len(svhn_test)))
