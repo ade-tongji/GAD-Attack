@@ -22,10 +22,14 @@ batch_size = 256
 
 # 1. 加载模型
 
+
+# 支持5个学生模型
 model_paths = {
-    "static": "./SVHN_target_modelC_static_loss3.pth",
-    "dynamic": "./SVHN_target_modelC_dynamic_loss3.pth",
-    "first_order": "./SVHN_target_modelC_1order_loss3.pth"
+    # "static": "./SVHN_target_modelC_static_loss3.pth",
+    # "dynamic": "./SVHN_target_modelC_dynamic(Gaussian)_loss3.pth",
+    "first_order": "./SVHN_target_modelC_1order_loss3.pth",
+    # "dynamic_FGSM": "./SVHN_target_modelC_dynamic(FGSM)_loss3.pth",
+    "dynamic_PGD": "./SVHN_target_modelC_dynamic(PGD)_loss3.pth"
 }
 
 def load_model(weight_path):
