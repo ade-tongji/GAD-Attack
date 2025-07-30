@@ -143,3 +143,23 @@ loss_model = alpha * student_loss + (1 - alpha) * ditillation_loss + neighbor_ms
 "VNIFGSM": torchattacks.VNIFGSM(model, eps=8 / 255, steps=7),
 "PIFGSM++": torchattacks.PIFGSMPP(model, max_epsilon= 8 / 255, num_iter_set=7),
 ```
+
+## 结果展示
+
+训练ResNet18模型后，对抗训练前和对抗训练后的自然精度如下所示：
+
+|对抗训练前|对抗训练后|
+|:-----:|:-----:|
+|92.66%|88.36%|
+
+PGD的攻击成功率为：52.86%
+
+蒸馏中，生成器Loss示意：
+
+![gdiver](images/distillation_loss_curve_1order_gdiver.png)
+
+![gnorm](images/distillation_loss_curve_1order_gnorm.png)
+
+最终结果示意：
+
+![result](images/result.png)
